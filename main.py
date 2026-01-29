@@ -23,6 +23,8 @@ llm = ChatOpenAI("gpt-5-mini")
 chain = prompt | llm | StrOutputParser()
 response = chain.invoke()
 
+#Title of the app
+st.title("Q&A Chatbot With OpenAI")
 
 
 
