@@ -21,25 +21,42 @@ if not LANGCHAIN_API_KEY:
     st.error("Missing LANGCHAIN_API_KEY")
     st.stop()
 
-
-
-# define prompt template
-prompt = ChatPromptTemplate(
-    [
-        ("system", "You are a helpful assistant. Please response to the user queries."),
-        ("human", "{input}")
-    ]
-)
-
-#
-
-llm = ChatOpenAI(model="gpt-5-mini")
-chain = prompt | llm | StrOutputParser()
-# response = chain.invoke()
-
-#Title of the app
+# Title of the app
 st.title("Q&A Chatbot With OpenAI")
 
+# Sidebar to set model settings
+with st.sidebar:
+    st.header("Model Settings")
 
+    # llm model selection
+    model = st.selectbox(
+        "Model",
+        options=["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini","gpt-4.1",],
+        index=0,         # default selection
+        help="Choose the OpenAI chat model to use"
+    )
 
+    # model temperature selection
+    temperature = st.slider(
+        "Temperature",
+        min_value=0.0,
+        max_value=2.0,
+        value=0.7,
+        step=0.1,
+        help="Higher = more creative, lower = more deterministic."
+        )
 
+    #
+
+# create function to generate query response
+def generate_response(question:str, system_prompt:str, model:str, temperature:float):
+    llm = ChatOpenAI(model=model, temperature=temperature)
+    prompt = ChatPromptTemplate(
+        [
+            ("system", system_prompt),
+            ("human", "{input}")
+        ]
+    )
+    chain = prompt | llm | StrOutputParser()
+    response = chain.invoke({"input": question})
+    return response
