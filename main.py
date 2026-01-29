@@ -46,7 +46,15 @@ with st.sidebar:
         help="Higher = more creative, lower = more deterministic."
         )
 
-    #
+    # toggle for system message
+    st.divider()
+    show_system_prompt = st.checkbox("Show system prompt", value=False)
+    system_prompt = st.text_area(
+        "System prompt",
+        value="You are a helpful assistant. Please respond to the user queries.",    # default value
+        height=120,
+        disabled= not show_system_prompt
+        )
 
 # create function to generate query response
 def generate_response(question:str, system_prompt:str, model:str, temperature:float):
