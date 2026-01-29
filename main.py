@@ -33,9 +33,9 @@ prompt = ChatPromptTemplate(
 
 #
 
-llm = ChatOpenAI("gpt-5-mini")
+llm = ChatOpenAI(model="gpt-5-mini")
 chain = prompt | llm | StrOutputParser()
-response = chain.invoke()
+# response = chain.invoke()
 
 #Title of the app
 st.title("Q&A Chatbot With OpenAI")
