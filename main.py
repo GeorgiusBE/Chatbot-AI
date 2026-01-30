@@ -77,4 +77,4 @@ st.title("Q&A Chatbot With OpenAI")
 question = st.text_input("What can I help you today?")
 
 if st.button("Submit") and question:
-    st.write(generate_response(question, model, temperature, system_prompt))
+    st.write(generate_response(question=question, model=model, temperature=temperature, system_prompt=system_prompt))
