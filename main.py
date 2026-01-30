@@ -49,12 +49,12 @@ with st.sidebar:
     st.divider()
     show_system_prompt = st.checkbox("Show system prompt", value=False)
 
-    if show_system_prompt:
-        system_prompt = st.text_area(
-            "System prompt",
-            value="You are a helpful assistant. Please respond to the user queries.",    # default value
-            height=120
-            )
+    system_prompt = st.text_area(
+        "System prompt",
+        value="You are a helpful assistant. Please respond to the user queries.",    # default value
+        height=120,
+        disabled= not show_system_prompt
+        )
 
 # create function to generate query response
 def generate_response(question:str, system_prompt:str, model:str, temperature:float):
