@@ -21,10 +21,8 @@ if not LANGCHAIN_API_KEY:
     st.error("Missing LANGCHAIN_API_KEY")
     st.stop()
 
-# Title of the app
-st.title("Q&A Chatbot With OpenAI")
 
-# Sidebar to set model settings
+# --- Sidebar to set model settings ---
 with st.sidebar:
     st.header("Model Settings")
 
@@ -49,12 +47,7 @@ with st.sidebar:
     # toggle for system message
     st.divider()
     show_system_prompt = st.checkbox("Show system prompt", value=False)
-    # system_prompt = st.text_area(
-    #     "System prompt",
-    #     value="You are a helpful assistant. Please respond to the user queries.",    # default value
-    #     height=120,
-    #     disabled= not show_system_prompt
-    #     )
+
     if show_system_prompt:
         system_prompt = st.text_area(
             "System prompt",
@@ -67,10 +60,20 @@ def generate_response(question:str, system_prompt:str, model:str, temperature:fl
     llm = ChatOpenAI(model=model, temperature=temperature)
     prompt = ChatPromptTemplate(
         [
-            ("system", system_prompt),
+            ("system", {system_prompt}),
             ("human", "{input}")
         ]
     )
     chain = prompt | llm | StrOutputParser()
     response = chain.invoke({"input": question})
     return response
+
+# --- App UI ---
+## Title of the app
+st.title("Q&A Chatbot With OpenAI")
+
+## user to input question
+question = st.text_input("What can I help you today?")
+
+if st.button("Submit") and question:
+    st.write(generate_response(question, model, temperature, system_prompt))
