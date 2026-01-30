@@ -29,7 +29,8 @@ with st.sidebar:
     # llm model selection
     model = st.selectbox(
         "Model",
-        options=["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini","gpt-4.1",],
+        # options=["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini","gpt-4.1",],
+        options=["gpt-5-mini"],
         index=0,         # default selection
         help="Choose the OpenAI chat model to use"
     )
