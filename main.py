@@ -61,7 +61,7 @@ def generate_response(question:str, system_prompt:str, model:str, temperature:fl
     llm = ChatOpenAI(model=model, temperature=temperature)
     prompt = ChatPromptTemplate(
         [
-            ("system", {system_prompt}),
+            ("system", system_prompt),
             ("human", "{input}")
         ]
     )
