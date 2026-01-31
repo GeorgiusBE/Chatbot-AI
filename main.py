@@ -9,8 +9,15 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_chroma import Chroma
 from langchain_core.runnables import RunnableLambda, RunnablePassthrough
 
+from langchain_community.chat_message_histories import ChatMessageHistory
+from langchain_core.chat_history import BaseChatMessageHistory
+from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain_core.prompts import MessagesPlaceholder
+from langchain_core.messages import trim_messages
+
 import os, tempfile, shutil
 from pathlib import Path
+from operator import itemgetter
 
 # load variables in .env locally (if present)
 from dotenv import load_dotenv
@@ -30,8 +37,59 @@ if not LANGCHAIN_API_KEY:
 
 
 
-# --- Back-end model ---
-## Save Streamlit UploadedFile objects to disk and return saved paths
+# --- Back-end ---
+## Create object to store chat message history
+    ## We use this "if" statement, because in Streamlit, when we click on a widget, etc. it will rerun
+    ## ... the whole Python file. And so, this "if" statement prevents the storage from getting overwritten
+if 'store' not in st.session_state:
+    st.session_state.store={}
+
+# define a function to retrieve chat message history
+def get_session_history(session_id:str) -> BaseChatMessageHistory:
+    if session_id not in st.session_state.store:
+        st.session_state.store[session_id] = ChatMessageHistory()
+    return st.session_state.store[session_id]
+
+# set trimmer to manage the conversation history
+def trim_history(inputs: dict) -> dict:
+    # create llm chain
+    llm = ChatOpenAI(model=model)
+    inputs["history"] = trim_messages(
+        inputs.get("history", []),
+        max_tokens=10000,
+        strategy="last",
+        token_counter=llm,
+        include_system=True,
+        allow_partial=False,
+        start_on="human"
+    )
+    return inputs
+
+## create function to generate query reponse without RAG
+def generate_response_plain(question: str, system_prompt: str, model: str, temperature: float):
+    llm = ChatOpenAI(model=model, temperature=temperature)
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", system_prompt),
+            MessagesPlaceholder(variable_name="history"),
+            ("human", "{input}")
+        ]
+    )
+    chain = RunnableLambda(lambda x: trim_history(x)) | prompt | llm | StrOutputParser()
+
+    # wrap runnable with message history
+    with_message_history = RunnableWithMessageHistory(
+        chain,
+        get_session_history=get_session_history,
+        input_messages_key="input",
+        history_messages_key="history"
+    )
+
+    config={"configurable":{"session_id":"chat1"}}
+
+    return with_message_history.stream({"input": question}, config=config)
+
+## Save user-uploaded files to disk and return saved paths
 def save_uploads_to_dir(uploaded_files, target_dir:Path) -> list[Path]:
     '''Save Streamlit UplaodedFile objects to disk and return saved paths'''
     target_dir.mkdir(parents=True, exist_ok=True) # create folder to store the uploaded files
@@ -44,7 +102,7 @@ def save_uploads_to_dir(uploaded_files, target_dir:Path) -> list[Path]:
         saved.append(out) # store file path of saved files
     return saved
 
-## create RAG retriever
+## create history-aware RAG retriever
 def create_rag_retriever(pdf_dir: Path):
     # data ingestion: On all pdf files in a folder
     loader = DirectoryLoader(
@@ -67,9 +125,38 @@ def create_rag_retriever(pdf_dir: Path):
         collection_name="pdf_embedding" # specify a new name for this collection, bcs a persisted Chroma DB can hold more than one collection
         )
 
-    # create the retriever
-    st.session_state.retriever = vectorstoredb.as_retriever() # store retriever in state memory
-  
+    # create the retriever (not history-aware)
+    basic_retriever = vectorstoredb.as_retriever() # store retriever in state memory
+
+    # create prompt to rewrite the user input + history
+    rewrite_prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system",
+            "Given a chat history and the latest user question "
+            "which might reference context in the chat history, "
+            "formulate a standalone question which can be understood "
+            "without the chat history. Do NOT answer the question, just "
+            "reformulate it if needed and otherwise return it as is."
+            ),
+            MessagesPlaceholder("history"),
+            ("human", "{input}")
+        ]
+    )
+
+    # Choose the llm model to rewrite the user input + history
+    llm_rewrite = ChatOpenAI(model="gpt-5-mini")
+    
+    # create chain that rewrites the current prompt based on chat history
+    st.session_state.retriever = (
+        {
+            "input": itemgetter("input"),
+            "history": itemgetter("history")
+        }
+        | rewrite_prompt
+        | llm_rewrite
+        | StrOutputParser()         # -> standalone query (string)
+        | basic_retriever           # -> list[Document]
+    )
 
 ## wrapper function on create_rag_retriever() -> avoid rerunning the RAG chain
 def get_retriever(pdf_dir: Path):
@@ -77,29 +164,19 @@ def get_retriever(pdf_dir: Path):
         # create retriever
         create_rag_retriever(pdf_dir)
 
-## create function to generate query reponse without RAG
-def generate_response_plain(question: str, system_prompt: str, model: str, temperature: float):
-    llm = ChatOpenAI(model=model, temperature=temperature)
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", system_prompt),
-            ("human", "{input}")
-        ]
-    )
-    chain = prompt | llm | StrOutputParser()
-    return chain.stream({"input": question})
-
 ## create function to generate query response with RAG
 def format_docs(docs):
     '''Join the page content of multiple Document objects'''
     return "\n\n".join(d.page_content for d in docs)
 
+## function to generate RAG-based llm response
 def generate_response_rag(retriever, question:str, system_prompt:str, model:str, temperature:float):
     # create llm chain
     llm = ChatOpenAI(model=model, temperature=temperature)
     prompt = ChatPromptTemplate.from_messages(
         [
             ("system", system_prompt),
+            MessagesPlaceholder(variable_name="history"),
             ("human", '''
              <context>
              {context}
@@ -112,15 +189,26 @@ def generate_response_rag(retriever, question:str, system_prompt:str, model:str,
         ]
     )
     chain = (
-        {
+        RunnableLambda(lambda x: trim_history(x))
+        | {
             "context": retriever | RunnableLambda(lambda x: format_docs(x)),
-            "input": RunnablePassthrough()
+            "input": itemgetter("input"),
+            "history": itemgetter("history")
         }
         | prompt
         | llm
         | StrOutputParser()
     )
-    response = chain.stream(question)
+
+    with_message_history = RunnableWithMessageHistory(
+        chain,
+        get_session_history=get_session_history,
+        input_messages_key="input",
+        history_messages_key="history"
+    )
+
+    config = {"configurable": {"session_id":"chat1"}}
+    response = with_message_history.stream({"input":question}, config=config)
     return response
 
 ## create a wrapper to choose whether to repond with or without RAG
@@ -240,3 +328,8 @@ if st.button("Submit") and question:
             use_rag=use_rag
             )
         )
+
+############### To do list
+####################### - chatbot the incorporates history
+####################### - history-aware RAG
+####################### - make the UI to be able to display past coversations, rather than replacing fast conversation?
