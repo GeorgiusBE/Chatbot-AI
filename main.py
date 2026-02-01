@@ -228,6 +228,60 @@ def generate_response(question: str, system_prompt: str, model: str, temperature
 
 # --- Sidebar to set model settings ---
 with st.sidebar:
+    ## pdf file uploader UI
+    st.header("File Uploader")
+
+    ## file uploader: PDFs
+    if "uploader_key" not in st.session_state:
+        st.session_state.uploader_key = 0
+
+    uploaded_pdfs = st.file_uploader(
+        "Upload PDF files",
+        type=['pdf'],
+        accept_multiple_files=True,
+        key=f"key_pdf_uploader{st.session_state.uploader_key}" # this will be needed to reset the file_uploader
+        )
+
+    col1, col2 = st.columns(2)
+    with col1:
+        build = st.button("Build Retriever", type="primary", use_container_width=True)
+    with col2:
+        clear = st.button("Clear Retriever", type="secondary", use_container_width=True)
+
+    ## Only build RAG when user clicks the button
+    if build:
+        if not uploaded_pdfs:
+            st.error("Upload PDFs first before creating a retriever!")
+        else:
+            with st.spinner("Indexing PDFs (loasing -> Splitting -> embedding)..."):
+                try:
+                    # create a temporary directory to store temporary files (in disk/permanent)
+                    tmp_root = Path(tempfile.mkdtemp()) # create temporary folder with unique name, e.g. C:\Users\You\AppData\Local\Temp\tmpabc123
+                    pdf_dir = tmp_root / "pdfs" # e.g. C:\Users\You\AppData\Local\Temp\tmpabc123\pdfs
+
+                    # save the uploaded file in the temporary directory
+                    save_uploads_to_dir(uploaded_pdfs, pdf_dir)
+
+                    # Build the retriever
+                    get_retriever(pdf_dir)
+                    st.success("The Retriever is ready!")
+                
+                finally:
+                    # remove the folder/files after uploading, as those files have been stored in the Vector Store
+                    shutil.rmtree(tmp_root, ignore_errors=True) # "rmtree()" stands for "remove tree". This will delete the entire diretory tree (i.e. the folder and everything inside it)
+
+    ## Clear the retriever
+    if clear:
+        st.session_state.pop("retriever", None)
+        st.session_state.uploader_key += 1 # change the key to reset the file_uploader
+        st.success("Cleared retriever!")
+        st.rerun()
+
+    ## Toggle to either use/not use the created retriever 
+    use_rag = st.checkbox("Use uploaded files (RAG)", value=True)
+
+    ## LLM model settings
+    st.divider()
     st.header("Model Settings")
 
     # llm model selection
@@ -259,77 +313,51 @@ with st.sidebar:
         disabled= not show_system_prompt
         )
 
-
 # --- App UI ---
 ## Title of the app
 st.title("Q&A Chatbot With OpenAI")
 
-## file uploader: PDFs
-if "uploader_key" not in st.session_state:
-    st.session_state.uploader_key = 0
+## store message history list in session state
+if "messages" not in st.session_state:
+    st.session_state.messages = [] # each item: {"role": "user"/"ai", "content": "..."}
 
-uploaded_pdfs = st.file_uploader(
-    "Upload PDF files",
-    type=['pdf'],
-    accept_multiple_files=True,
-    key=f"key_pdf_uploader{st.session_state.uploader_key}" # this will be needed to reset the file_uploader
-    )
-
-col1, col2 = st.columns(2)
-with col1:
-    build = st.button("Build Retriever", type="primary", use_container_width=True)
-with col2:
-    clear = st.button("Clear Retriever", type="secondary", use_container_width=True)
-
-## Only build RAG when user clicks the button
-if build:
-    if not uploaded_pdfs:
-        st.error("Upload PDFs first before creating a retriever!")
-    else:
-        with st.spinner("Indexing PDFs (loasing -> Splitting -> embedding)..."):
-            try:
-                # create a temporary directory to store temporary files (in disk/permanent)
-                tmp_root = Path(tempfile.mkdtemp()) # create temporary folder with unique name, e.g. C:\Users\You\AppData\Local\Temp\tmpabc123
-                pdf_dir = tmp_root / "pdfs" # e.g. C:\Users\You\AppData\Local\Temp\tmpabc123\pdfs
-
-                # save the uploaded file in the temporary directory
-                save_uploads_to_dir(uploaded_pdfs, pdf_dir)
-
-                # Build the retriever
-                get_retriever(pdf_dir)
-                st.success("The Retriever is ready!")
-            
-            finally:
-                # remove the folder/files after uploading, as those files have been stored in the Vector Store
-                shutil.rmtree(tmp_root, ignore_errors=True) # "rmtree()" stands for "remove tree". This will delete the entire diretory tree (i.e. the folder and everything inside it)
-
-## Clear the retriever
-if clear:
-    st.session_state.pop("retriever", None)
-    st.session_state.uploader_key += 1 # change the key to reset the file_uploader
-    st.success("Cleared retriever!")
-    st.rerun()
+## display full chat history messages
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
 
 ## user to input question
-question = st.text_input("What can I help you today?")
-use_rag = st.checkbox("Use uploaded files (RAG)", value=True)
+question = st.chat_input("What can I help you today?")
 
 ## run the model
-if st.button("Submit") and question:
-    if use_rag and "retriever" not in st.session_state:
-        st.warning("RAG is enabled, but no retriever is built yet. Answering without uploaded files...")
+if question:
+    # store new user input message
+    st.session_state.messages.append({"role":"user", "content":question})
 
-    with st.spinner("Generating response...", show_time=True):
-        st.write(generate_response(
+    # render/show/print user input message
+    with st.chat_message("user"):
+        st.markdown(question)
+    
+    # render/print AI response with a placeholder to update while streaming
+    with st.chat_message("ai"):
+        placeholder = st.empty() # intially shows nothing, but it's replaced with contents later
+        full = ""
+
+        # generate response
+        stream = generate_response(
             question=question,
             model=model,
             temperature=temperature,
             system_prompt=system_prompt,
             use_rag=use_rag
-            )
         )
 
-############### To do list
-####################### - chatbot the incorporates history
-####################### - history-aware RAG
-####################### - make the UI to be able to display past coversations, rather than replacing fast conversation?
+        for chunk in stream:
+            full += chunk
+            placeholder.markdown(full) #re-render the placeholder with the latest full text
+
+    if use_rag and "retriever" not in st.session_state:
+        st.warning("RAG is enabled, but no retriever is built yet. Answering without uploaded files...")
+
+    # store new AI response message
+    st.session_state.messages.append({"role":"ai", "content":full})
